@@ -1,4 +1,4 @@
-###Disclaimer: This readme file is generated using AI. The file may not be completely accurate due to acuracy rate of LLMs. Kindly update owner if any discrepencies are found
+###Disclaimer: This readme file is generated using AI. The file may not be completely accurate due to accuracy rate of LLMs. Kindly update owner if any discrepencies are found
 
 # Redmine Integrated Chatbot (RIC)
 
@@ -228,8 +228,5 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 ## 🙏 Acknowledgments
 
-- AI powered by [Google Gemini](https://deepmind.google/technologies/gemini/)
-- Database hosted on [NeonDB](https://neon.tech/)
-- Redmine integration via [python-redmine](https://python-redmine.com/)
 -Highly supportive and inspiring team from lumiq.ai
 ---
