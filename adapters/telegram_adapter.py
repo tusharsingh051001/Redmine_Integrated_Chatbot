@@ -16,6 +16,7 @@ from handlers.project_handler import ProjectHandler
 from handlers.time_entry_handler import TimeEntryHandler
 
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 class TelegramBotAdapter(BaseChatAdapter):
@@ -23,6 +24,7 @@ class TelegramBotAdapter(BaseChatAdapter):
         self.token = token
         self.app = Application.builder().token(token).build()
 
+        # Handlers / services
         self.auth_handler = AuthHandler()
         self.issue_handler = IssueHandler()
         self.project_handler = ProjectHandler()
@@ -31,7 +33,7 @@ class TelegramBotAdapter(BaseChatAdapter):
         self.register_handlers()
 
     async def start(self):
-        logger.info("Telegram bot started")
+        logger.info("Telegram bot starting...")
         await self.app.initialize()
         await self.app.start()
         await self.app.run_polling()
@@ -44,36 +46,33 @@ class TelegramBotAdapter(BaseChatAdapter):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await self.app.bot.send_message(chat_id=chat_id, text=message, reply_markup=reply_markup)
 
-
     def register_handlers(self):
+        logger.debug("Registering handlers...")
+
+        # Basic commands
         self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("help", self.help_command))
         self.app.add_handler(CommandHandler("menu", self.menu_command))
 
-        # Authentication conversation----------------------------------------------------------
+        # Authentication conversation
         auth_conv = ConversationHandler(
             entry_points=[CommandHandler("setup", self.auth_handler.start_setup)],
             states={
-                self.auth_handler.EMPLOYEE_ID: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_employee_id)
-                ],
-                self.auth_handler.REDMINE_URL: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_redmine_url)
-                ],
-                self.auth_handler.API_KEY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_api_key)
-                ],
-                self.auth_handler.PROJECT_ID: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_project_id)
-                ],
+                self.auth_handler.EMPLOYEE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_employee_id)],
+                self.auth_handler.REDMINE_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_redmine_url)],
+                self.auth_handler.API_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_api_key)],
+                self.auth_handler.PROJECT_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.auth_handler.get_project_id)],
             },
             fallbacks=[CommandHandler("cancel", self.cancel_command)],
         )
         self.app.add_handler(auth_conv)
 
-        # Time entry conversation----------------------------------------------------------
+        # TIME entry conversation (works for /logtime and menu button)
         time_conv = ConversationHandler(
-            entry_points=[CommandHandler("logtime", self.time_entry_handler.start_log_time)],
+            entry_points=[
+                CommandHandler("logtime", self.time_entry_handler.start_log_time),
+                CallbackQueryHandler(self.time_entry_handler.start_log_time, pattern="^menu_logtime$")
+            ],
             states={
                 self.time_entry_handler.GETTING_WORK: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_entry_handler.process_work_log)
@@ -83,24 +82,43 @@ class TelegramBotAdapter(BaseChatAdapter):
                 ],
             },
             fallbacks=[CommandHandler("cancel", self.cancel_command)],
-            allow_reentry=True, 
+            allow_reentry=True,
         )
         self.app.add_handler(time_conv)
+
+        # Issue-specific callback
+        self.app.add_handler(CallbackQueryHandler(self.issue_selected_callback, pattern=r"^logtime_"))
+
+        # General button handler
         self.app.add_handler(CallbackQueryHandler(self.button_handler))
+
+        # Quick log for selected issue
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_entry_handler.quick_log_for_selected_issue))
+
+        # Generic message fallback
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
+        logger.debug("Handler registration complete.")
+
+    # ---------- Command implementations ----------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         welcome_msg = f"""
-👋 *Welcome to Redmine Integrated Chatbot (RIC)*, {user.first_name}!
+👋 *Welcome to Redmine Integrated Chatbot(RIC) for Lumiq*, {user.first_name}!
 
-I can help you manage your Redmine tasks, projects, and log time — all right here.
+I can help you view and log time to your Redmine tasks, projects, and issues — all right here.
 
 *Get started:*
-• /setup - Connect your Redmine account  
-• /help - View available commands  
-• /menu - Open the control panel
+Step1: /setup - Connect your Redmine account 
+Step2: /menu - Open the control panel and access all features
+
+Once setup is completed and authenticated, you can also use natural language to access features like:
+> "Show my open issues"  
+> "Log 2 hours for bug fix"
+
+* Enter /help to view all available commands to access full feature set of the chatbot.
 """
+        logger.debug("start_command invoked by user=%s", user.id)
         await update.message.reply_text(welcome_msg, parse_mode="Markdown")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -117,12 +135,8 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
 - /projects — View your projects
 
 **Other**
-- /help — Show this help
+- /help — Show this message
 - /cancel — Cancel current operation
-
-💡 *Tip:* You can also use natural language like:
-> "Show my open issues"  
-> "Log 2 hours for bug fix"
 """
         await update.message.reply_text(help_msg, parse_mode="Markdown")
 
@@ -132,7 +146,7 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
             {"text": "📁 My Projects", "data": "menu_projects"},
             {"text": "⏱️ Log Time", "data": "menu_logtime"},
             {"text": "➕ Create Issue", "data": "menu_create_issue"},
-            {"text": "⚙️ Settings", "data": "menu_settings"},
+            {"text": "⚙️ Setup", "data": "menu_settings"},
             {"text": "🤡 RIC", "data": "RIC"},
         ]
 
@@ -151,6 +165,26 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
             parse_mode="Markdown",
         )
 
+    # ---------- Callback handling ----------
+    async def issue_selected_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        parts = query.data.split("_", 1)
+        if len(parts) != 2 or not parts[1].isdigit():
+            await query.message.reply_text("Invalid issue selection. Try /myissues again.")
+            return
+
+        issue_id = parts[1]
+        context.user_data["selected_issue_id"] = issue_id
+        context.user_data["in_conversation"] = True
+
+        await query.message.reply_text(
+            f"🕒 Selected issue #{issue_id}.\n\n"
+            f"Now describe your work in natural language. Example:\n"
+            f"'Worked 2h fixing login bug yesterday'\n\n"
+            f"When ready, send your message below 👇"
+        )
+
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -161,11 +195,10 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
         elif action == "menu_projects":
             await self.project_handler.show_projects(update, context)
         elif action == "menu_logtime":
-            # Clear previous conversation and start log time
             context.user_data.clear()
-            context.user_data['in_conversation'] = True
             await query.edit_message_text("⏱️ Let's log your time entry...")
-            context.application.create_task(self.time_entry_handler.start_log_time(update, context))
+            # Start the /logtime conversation
+            await self.time_entry_handler.start_log_time(update, context)
         elif action == "menu_create_issue":
             await self.issue_handler.start_create_issue(update, context)
         elif action == "menu_settings":
@@ -176,14 +209,15 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
             await query.edit_message_text(text="Click below 👇", reply_markup=InlineKeyboardMarkup(keyboard))
         elif action in ["confirm_log", "cancel_log"]:
             await self.time_entry_handler.confirm_log(update, context)
+        else:
+            await query.message.reply_text("Unknown action. Use /menu to start over.")
 
+    # ---------- Message Handling ----------
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Skip keyword detection if user is in a conversation
-        if context.user_data.get('in_conversation'):
-            return  # ConversationHandler will process it
+        if context.user_data.get("in_conversation"):
+            return  # Let conversation handler process messages
 
         message = update.message.text.lower()
-
         if any(word in message for word in ["issue", "task", "bug"]):
             await self.issue_handler.show_my_issues(update, context)
         elif any(word in message for word in ["project", "projects"]):
@@ -196,6 +230,6 @@ I can help you manage your Redmine tasks, projects, and log time — all right h
             await update.message.reply_text("I'm not sure what you mean. Try /help or /menu.")
 
     async def cancel_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        context.user_data.clear()  # clear conversation state
+        context.user_data.clear()
         await update.message.reply_text("Operation cancelled. Use /menu to start over.")
         return ConversationHandler.END
