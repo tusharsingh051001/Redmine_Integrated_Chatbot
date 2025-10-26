@@ -19,3 +19,5 @@ Thumbs.db
 
 # Logs
 *.log
+
+.Redmine_API_Documentation.pdf
