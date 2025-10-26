@@ -33,7 +33,7 @@ Please describe your work. Include:
 - What you worked on
 - How long you spent
 - When (if not today)
-- Issue IDs (mandatory)
+- Issue IDs (mandatory, if you are not sure about the issue ID, you can also log time by selecting an issue from /myissues)
 
 **Example:**
 "Today I worked on bug fixes for 3 hours and code review for 1.5 hours for issue #1234 and #5678."

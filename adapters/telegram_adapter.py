@@ -54,7 +54,7 @@ class TelegramBotAdapter(BaseChatAdapter):
         self.app.add_handler(CommandHandler("help", self.help_command))
         self.app.add_handler(CommandHandler("menu", self.menu_command))
 
-        # Authentication conversation
+        # Auth conversation
         auth_conv = ConversationHandler(
             entry_points=[CommandHandler("setup", self.auth_handler.start_setup)],
             states={
@@ -67,7 +67,7 @@ class TelegramBotAdapter(BaseChatAdapter):
         )
         self.app.add_handler(auth_conv)
 
-        # TIME entry conversation (works for /logtime and menu button)
+        # Log time conversation
         time_conv = ConversationHandler(
             entry_points=[
                 CommandHandler("logtime", self.time_entry_handler.start_log_time),
@@ -86,21 +86,31 @@ class TelegramBotAdapter(BaseChatAdapter):
         )
         self.app.add_handler(time_conv)
 
-        # Issue-specific callback
+        # Issue creation conversation
+        issue_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(self.issue_handler.start_create_issue, pattern="^menu_create_issue$")],
+            states={
+                self.issue_handler.ASK_PROJECT: [CallbackQueryHandler(self.issue_handler.handle_project_choice)],
+                self.issue_handler.ASK_SUBJECT: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.issue_handler.handle_subject)],
+                self.issue_handler.ASK_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, self.issue_handler.handle_description)],
+                self.issue_handler.ASK_PRIORITY: [CallbackQueryHandler(self.issue_handler.handle_priority)],
+                self.issue_handler.ASK_TRACKER: [CallbackQueryHandler(self.issue_handler.handle_tracker)],
+                self.issue_handler.CONFIRM_CREATE: [CallbackQueryHandler(self.issue_handler.confirm_create_issue)],
+            },
+            fallbacks=[CommandHandler("cancel", self.cancel_command)],
+            allow_reentry=True,
+        )
+        self.app.add_handler(issue_conv)
+
+        # General handlers
         self.app.add_handler(CallbackQueryHandler(self.issue_selected_callback, pattern=r"^logtime_"))
-
-        # General button handler
         self.app.add_handler(CallbackQueryHandler(self.button_handler))
-
-        # Quick log for selected issue
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.time_entry_handler.quick_log_for_selected_issue))
-
-        # Generic message fallback
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
         logger.debug("Handler registration complete.")
 
-    # ---------- Command implementations ----------
+    # --------------------- Commands ---------------------
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = update.effective_user
         welcome_msg = f"""
@@ -112,11 +122,11 @@ I can help you view and log time to your Redmine tasks, projects, and issues —
 Step1: /setup - Connect your Redmine account 
 Step2: /menu - Open the control panel and access all features
 
-Once setup is completed and authenticated, you can also use natural language to access features like:
+Once setup is completed and authenticated, you can also use natural language to access all features like:
 > "Show my open issues"  
 > "Log 2 hours for bug fix"
 
-* Enter /help to view all available commands to access full feature set of the chatbot.
+* Enter /help to view commands to access full feature set of the chatbot.
 """
         logger.debug("start_command invoked by user=%s", user.id)
         await update.message.reply_text(welcome_msg, parse_mode="Markdown")
@@ -165,7 +175,7 @@ Once setup is completed and authenticated, you can also use natural language to 
             parse_mode="Markdown",
         )
 
-    # ---------- Callback handling ----------
+    # --------------------- Callbacks ---------------------
     async def issue_selected_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
@@ -179,8 +189,8 @@ Once setup is completed and authenticated, you can also use natural language to 
         context.user_data["in_conversation"] = True
 
         await query.message.reply_text(
-            f"🕒 Selected issue #{issue_id}.\n\n"
-            f"Now describe your work in natural language. Example:\n"
+            f"Logging time to issue #{issue_id}.\n\n"
+            f"Now describe your work in natural language for this issue. Example:\n"
             f"'Worked 2h fixing login bug yesterday'\n\n"
             f"When ready, send your message below 👇"
         )
@@ -196,8 +206,7 @@ Once setup is completed and authenticated, you can also use natural language to 
             await self.project_handler.show_projects(update, context)
         elif action == "menu_logtime":
             context.user_data.clear()
-            await query.edit_message_text("⏱️ Let's log your time entry...")
-            # Start the /logtime conversation
+            await query.edit_message_text("Let's log your time entry...")
             await self.time_entry_handler.start_log_time(update, context)
         elif action == "menu_create_issue":
             await self.issue_handler.start_create_issue(update, context)
@@ -212,10 +221,9 @@ Once setup is completed and authenticated, you can also use natural language to 
         else:
             await query.message.reply_text("Unknown action. Use /menu to start over.")
 
-    # ---------- Message Handling ----------
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get("in_conversation"):
-            return  # Let conversation handler process messages
+            return
 
         message = update.message.text.lower()
         if any(word in message for word in ["issue", "task", "bug"]):
